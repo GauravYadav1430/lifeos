@@ -1,0 +1,252 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==========================================
+// USER & CORE
+// ==========================================
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  name          String?
+  avatarUrl     String?
+  
+  // Progression Stats
+  xp            Int       @default(0)
+  level         Int       @default(1)
+  coins         Int       @default(0)
+  prestigeLevel Int       @default(0)
+  
+  // Onboarding
+  onboardingComplete Boolean @default(false)
+  
+  // Engagement
+  currentStreak Int       @default(0)
+  highestStreak Int       @default(0)
+  lastLoginAt   DateTime?
+  
+  // Guilds & Social
+  guildId       String?
+  guild         Guild?    @relation(fields: [guildId], references: [id])
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Core Relations
+  tasks         Task[]
+  habits        Habit[]
+  goals         Goal[]
+  journals      JournalEntry[]
+  
+  // Gamification Relations
+  achievements  UserAchievement[]
+  xpEvents      XPEvent[]
+  userQuests    UserQuest[]
+  inventory     UserInventory[]
+}
+
+// ==========================================
+// CORE PRODUCTIVITY
+// ==========================================
+model Task {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title       String
+  description String?
+  priority    String    @default("MEDIUM") // LOW, MEDIUM, HIGH, EPIC
+  dueDate     DateTime?
+  completed   Boolean   @default(false)
+  xpReward    Int       @default(10)
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  xpEvents    XPEvent[] // Links task completion to exact XP events
+}
+
+model Habit {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title         String
+  frequency     String    @default("DAILY")
+  streak        Int       @default(0)
+  lastCompleted DateTime?
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Goal {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title       String
+  target      Int       @default(100)
+  progress    Int       @default(0)
+  deadline    DateTime?
+  completed   Boolean   @default(false)
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model JournalEntry {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  content   String    @db.Text
+  mood      Int       @default(3) // 1-5
+  date      DateTime  @default(now())
+  
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+// ==========================================
+// ADVANCED GAMIFICATION ENGINE
+// ==========================================
+
+model XPEvent {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  amount         Int
+  reason         String   // E.g., "TASK_COMPLETED", "DAILY_STREAK", "BOSS_DEFEATED"
+  category       String   // E.g., "PRODUCTIVITY", "HEALTH", "SOCIAL"
+  
+  // Modifiers
+  streakModifier Float    @default(1.0)
+  multiplier     Float    @default(1.0)
+  
+  // Relations (Polymorphic-lite logging)
+  taskId         String?
+  task           Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  questId        String?
+  quest          Quest?   @relation(fields: [questId], references: [id], onDelete: SetNull)
+  
+  // Analytics / Anti-Cheat
+  metadata       Json?    // E.g., { "clientIp": "...", "durationSeconds": 140 }
+  
+  createdAt      DateTime @default(now())
+}
+
+model Achievement {
+  id               String            @id @default(uuid())
+  title            String
+  description      String
+  badgeUrl         String?
+  xpReward         Int               @default(50)
+  category         String            // "STREAK", "COMBAT", "MASTERY"
+  userAchievements UserAchievement[]
+}
+
+model UserAchievement {
+  id            String      @id @default(uuid())
+  userId        String
+  achievementId String
+  unlockedAt    DateTime    @default(now())
+  
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+}
+
+model Quest {
+  id          String      @id @default(uuid())
+  title       String
+  description String
+  type        String      // "DAILY", "WEEKLY", "SEASONAL", "EPIC"
+  xpReward    Int
+  coinReward  Int         @default(0)
+  
+  userQuests  UserQuest[]
+  xpEvents    XPEvent[]
+}
+
+model UserQuest {
+  id          String    @id @default(uuid())
+  userId      String
+  questId     String
+  status      String    @default("ACTIVE") // ACTIVE, COMPLETED, FAILED
+  progress    Int       @default(0)
+  target      Int       @default(1)
+  completedAt DateTime?
+  
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  quest       Quest     @relation(fields: [questId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questId])
+}
+
+// ==========================================
+// MULTIPLAYER & GUILDS
+// ==========================================
+
+model Guild {
+  id          String       @id @default(uuid())
+  name        String
+  description String?
+  xp          Int          @default(0)
+  level       Int          @default(1)
+  createdAt   DateTime     @default(now())
+  
+  members     User[]
+  bossBattles BossBattle[]
+}
+
+model BossBattle {
+  id          String   @id @default(uuid())
+  title       String
+  description String
+  totalHp     Int
+  currentHp   Int
+  rewardXp    Int
+  rewardCoins Int      @default(0)
+  
+  guildId     String
+  guild       Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  
+  isActive    Boolean  @default(true)
+  startsAt    DateTime @default(now())
+  endsAt      DateTime?
+}
+
+// ==========================================
+// ECONOMY & COSMETICS
+// ==========================================
+
+model Item {
+  id          String          @id @default(uuid())
+  name        String
+  description String
+  type        String          // "THEME", "AVATAR", "SOUND_PACK", "BADGE"
+  rarity      String          // "COMMON", "RARE", "EPIC", "LEGENDARY"
+  price       Int             @default(0)
+  
+  inventories UserInventory[]
+}
+
+model UserInventory {
+  id          String   @id @default(uuid())
+  userId      String
+  itemId      String
+  isEquipped  Boolean  @default(false)
+  acquiredAt  DateTime @default(now())
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  item        Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, itemId])
+}
