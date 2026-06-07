@@ -1,9 +1,12 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useUser } from "@clerk/nextjs"
-import { Sparkles, Dumbbell, BookOpen, Brain, Zap } from "lucide-react"
-import { useGamificationStore } from "@/store/useGamificationStore"
+import { Sparkles, Dumbbell, BookOpen, Brain, Zap, Loader2 } from "lucide-react"
+
+// Server Actions
+import { getTasks, completeTask } from "@/actions/tasks"
+import { getRecentActivities, getUserStats } from "@/actions/gamification"
 
 // UI Components
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -15,21 +18,19 @@ import { XPProgressBar } from "@/components/dashboard/XPProgressBar"
 import { StatBar } from "@/components/dashboard/StatBar"
 import { QuestCard } from "@/components/dashboard/QuestCard"
 import { BossBattleCard } from "@/components/dashboard/BossBattleCard"
-import { ActivityFeed, ActivityType } from "@/components/dashboard/ActivityFeed"
+import { ActivityFeed, ActivityItem } from "@/components/dashboard/ActivityFeed"
 
 export default function DashboardPage() {
   const { user } = useUser()
-  const { level, xp, addXp } = useGamificationStore()
   
-  // Calculate max XP for current level (simple exponential curve)
-  const maxXP = level * 500
+  const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState({ xp: 0, level: 1, currentStreak: 0 })
+  const [quests, setQuests] = useState<any[]>([])
+  const [activities, setActivities] = useState<ActivityItem[]>([])
 
-  const [quests, setQuests] = useState([
-    { id: "q1", title: "Morning Review", xp: 50, type: "HABIT" as const, completed: false },
-    { id: "q2", title: "Ship landing page update", xp: 150, type: "TASK" as const, completed: false },
-    { id: "q3", title: "Read 10 pages of Atomic Habits", xp: 30, type: "DAILY" as const, completed: false },
-  ])
+  const maxXP = stats.level * 500
 
+  // Placeholder for boss battle (would be fetched from DB in full implementation)
   const [bossBattle, setBossBattle] = useState({
     id: "b1",
     title: "Project Phoenix Launch",
@@ -39,44 +40,68 @@ export default function DashboardPage() {
     totalSteps: 10,
   })
 
-  // Mock activity feed
-  const [activities, setActivities] = useState([
-    { id: "a1", type: "ACHIEVEMENT" as ActivityType, title: "Early Bird", description: "Logged in before 6 AM", timestamp: "Today, 5:45 AM", xpAmount: 100 },
-    { id: "a2", type: "XP_GAIN" as ActivityType, title: "Completed: Meditate", description: "10 minute session", timestamp: "Yesterday, 8:00 PM", xpAmount: 30 },
-  ])
+  useEffect(() => {
+    fetchDashboardData()
+  }, [])
 
-  const handleCompleteQuest = (id: string, xpReward: number) => {
+  const fetchDashboardData = async () => {
+    try {
+      const [fetchedTasks, fetchedActivities, fetchedStats] = await Promise.all([
+        getTasks(),
+        getRecentActivities(),
+        getUserStats()
+      ])
+
+      setQuests(fetchedTasks.slice(0, 5)) // Only show top 5 active tasks on dashboard
+      setActivities(fetchedActivities as ActivityItem[])
+      if (fetchedStats) {
+        setStats({
+          xp: fetchedStats.xp,
+          level: fetchedStats.level,
+          currentStreak: fetchedStats.currentStreak
+        })
+      }
+    } catch (error) {
+      console.error("Failed to load dashboard data", error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCompleteQuest = async (id: string, xpReward: number) => {
+    // Optimistic UI update
     setQuests(quests.map(q => q.id === id ? { ...q, completed: true } : q))
-    addXp(xpReward)
     
-    // Add to activity feed
-    setActivities(prev => [{
-      id: Date.now().toString(),
-      type: "XP_GAIN",
-      title: `Completed: ${quests.find(q => q.id === id)?.title}`,
-      description: "Quest completed",
-      timestamp: "Just now",
-      xpAmount: xpReward
-    }, ...prev])
+    try {
+      const result = await completeTask(id)
+      setStats(prev => ({
+        ...prev,
+        xp: result.newTotalXp,
+        level: result.newLevel
+      }))
+      
+      // Refresh activities
+      const newActivities = await getRecentActivities()
+      setActivities(newActivities as ActivityItem[])
+    } catch (error) {
+      console.error("Failed to complete task", error)
+      // Revert optimistic update
+      setQuests(quests.map(q => q.id === id ? { ...q, completed: false } : q))
+    }
   }
 
   const handleAttackBoss = (id: string) => {
     if (bossBattle.progress < bossBattle.totalSteps) {
       setBossBattle(prev => ({ ...prev, progress: prev.progress + 1 }))
-      addXp(50) // Small XP for attacking
-      
-      if (bossBattle.progress + 1 === bossBattle.totalSteps) {
-        addXp(bossBattle.xpReward) // Big reward for defeating
-        setActivities(prev => [{
-          id: Date.now().toString(),
-          type: "BOSS_DEFEATED",
-          title: `Defeated: ${bossBattle.title}`,
-          description: "Boss battle completed!",
-          timestamp: "Just now",
-          xpAmount: bossBattle.xpReward
-        }, ...prev])
-      }
     }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    )
   }
 
   return (
@@ -84,7 +109,7 @@ export default function DashboardPage() {
       
       {/* Top Section: XP Bar */}
       <div className="mb-8">
-        <XPProgressBar currentXP={xp} maxXP={maxXP} level={level} />
+        <XPProgressBar currentXP={stats.xp} maxXP={maxXP} level={stats.level} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
@@ -95,8 +120,8 @@ export default function DashboardPage() {
             name={user?.firstName || "Commander"}
             playerClass="Technomancer"
             avatarUrl={user?.imageUrl}
-            streak={12}
-            rank="Silver III"
+            streak={stats.currentStreak}
+            rank={stats.level < 5 ? "Bronze" : stats.level < 10 ? "Silver" : "Gold"}
           />
 
           <div className="bg-secondary/10 border border-white/5 rounded-2xl p-6 backdrop-blur-sm">
@@ -133,22 +158,22 @@ export default function DashboardPage() {
             </div>
             
             <div className="space-y-3">
-              {quests.map(quest => (
-                <QuestCard 
-                  key={quest.id}
-                  id={quest.id}
-                  title={quest.title}
-                  type={quest.type}
-                  xpReward={quest.xp}
-                  isCompleted={quest.completed}
-                  onComplete={handleCompleteQuest}
-                />
-              ))}
-              
-              {quests.every(q => q.completed) && (
+              {quests.length === 0 ? (
                 <div className="p-8 text-center rounded-xl border border-dashed border-white/10 bg-secondary/10">
-                  <p className="text-muted-foreground">All quests completed for today. Take a rest!</p>
+                  <p className="text-muted-foreground">No active quests found. Go to the Quest Log to add some!</p>
                 </div>
+              ) : (
+                quests.map(quest => (
+                  <QuestCard 
+                    key={quest.id}
+                    id={quest.id}
+                    title={quest.title}
+                    type={quest.priority === "BOSS" ? "DAILY" : quest.priority === "HIGH" ? "TASK" : "HABIT"}
+                    xpReward={quest.xpReward}
+                    isCompleted={quest.completed}
+                    onComplete={handleCompleteQuest}
+                  />
+                ))
               )}
             </div>
           </div>
@@ -167,7 +192,7 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent>
               <p className="text-sm leading-relaxed text-violet-100/80">
-                You are on a <span className="text-emerald-400 font-bold">12-day streak</span>. 
+                You are on a <span className="text-emerald-400 font-bold">{stats.currentStreak}-day streak</span>. 
                 Your Intelligence stat is progressing faster than Strength. Consider adding a Fitness quest tomorrow to maintain balance.
               </p>
               <Button variant="outline" className="w-full mt-4 bg-violet-950/30 border-violet-500/30 text-violet-300 hover:bg-violet-900/50 hover:text-white">

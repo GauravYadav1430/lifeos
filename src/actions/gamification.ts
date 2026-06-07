@@ -88,3 +88,44 @@ export async function grantXP(payload: GrantXpPayload) {
     didLevelUp
   };
 }
+
+export async function getRecentActivities() {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  const events = await prisma.xPEvent.findMany({
+    where: { userId },
+    orderBy: { createdAt: 'desc' },
+    take: 10,
+    include: {
+      task: true
+    }
+  });
+
+  return events.map(e => ({
+    id: e.id,
+    type: e.category === "COMBAT" ? "BOSS_DEFEATED" : "XP_GAIN",
+    title: e.reason,
+    description: e.task ? e.task.title : e.reason,
+    timestamp: e.createdAt.toLocaleString(),
+    xpAmount: e.amount
+  }));
+}
+
+export async function getUserStats() {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      xp: true,
+      level: true,
+      currentStreak: true,
+      name: true,
+      avatarUrl: true
+    }
+  });
+
+  return user;
+}

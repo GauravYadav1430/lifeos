@@ -1,19 +1,25 @@
-import { Pool } from '@neondatabase/serverless'
-import { PrismaNeon } from '@prisma/adapter-neon'
 import { PrismaClient } from '@prisma/client'
 
+// Fallback to load .env.local manually if Next.js/Turbopack hasn't injected it yet
+if (!process.env.DATABASE_URL) {
+  require('dotenv').config({ path: ['.env.local', '.env'] });
+}
+
 const prismaClientSingleton = () => {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL })
-  // @ts-expect-error - Type definition mismatch between Prisma 7 and neondatabase/serverless
-  const adapter = new PrismaNeon(pool)
-  return new PrismaClient({ adapter })
+  const connectionString = process.env.DATABASE_URL;
+  
+  if (!connectionString) {
+    throw new Error("DATABASE_URL is not set in the environment.");
+  }
+
+  return new PrismaClient()
 }
 
 declare global {
-  var prismaGlobal: undefined | ReturnType<typeof prismaClientSingleton>
+  var prismaGlobalV3: undefined | ReturnType<typeof prismaClientSingleton>
 }
 
 // Check if we are in production to avoid multiple instances in development due to HMR
-export const prisma = globalThis.prismaGlobal ?? prismaClientSingleton()
+export const prisma = globalThis.prismaGlobalV3 ?? prismaClientSingleton()
 
-if (process.env.NODE_ENV !== 'production') globalThis.prismaGlobal = prisma
+if (process.env.NODE_ENV !== 'production') globalThis.prismaGlobalV3 = prisma
